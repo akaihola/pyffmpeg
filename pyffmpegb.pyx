@@ -3,7 +3,7 @@
 # #######################################################################################
 # Pyffmpegb
 #
-# Copyright (C) 2008-2009 Bertrand Nouvel <bertrand.nouvel@nii.ac.jp>
+# Copyright (C) 2008-2009 Bertrand Nouvel <nouvel@nii.ac.jp>
 #   Japanese French Laboratory for Informatics
 #   CNRS 
 # #######################################################################################
