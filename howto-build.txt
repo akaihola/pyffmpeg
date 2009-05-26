@@ -1,7 +1,8 @@
 Building pyffmpeg on Linux
 --------------------------
 
-All you need to build it on Linux is the ffmpeg library installed.
+All you need to build it on Linux is the ffmpeg, and libswcale library installed.
+
 Then all you need to do it run those two commands and you're done:
 
 python setup.py build
