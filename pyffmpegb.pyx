@@ -358,6 +358,7 @@ cdef extern from "avcodec.h":
         int64_t     timecode_frame_start
         int skip_frame
         int skip_idct
+        int skip_loop_filter
 
     enum CodecType:
         CODEC_TYPE_UNKNOWN = -1
@@ -966,6 +967,7 @@ cdef class AFFMpegReader:
     cdef float opts ## orginal pts recoded as a float
     cdef unsigned long long int pts
     cdef unsigned long long int dts
+    cdef unsigned long long int errjmppts # when trying to skip over buggy area
     cdef unsigned long int frameno
     cdef float fps # real frame per seconds (not declared one)
     cdef float tps # ticks per seconds
@@ -976,7 +978,7 @@ cdef class AFFMpegReader:
     cdef AVPacket packetbufb
     cdef int altpacket
     #
-    cdef bool observers_enabled
+    cdef bint observers_enabled
 
 
     cdef AVFormatContext *FormatCtx
@@ -1051,12 +1053,30 @@ cdef class Track:
             self.observer=None
             self.support_truncated=support_truncated
             for k in args.keys():
-                sys.stderr.write("warning unsupported arguments in stream initialization :"+k+"\n")
+                if k not in [ "skip_frame", "skip_loop_filter", "skip_idct", "hurry_up", "hurry_mode", "dct_algo", "idct_algo" ]:
+                   sys.stderr.write("warning unsupported arguments in stream initialization :"+k+"\n")
             if self.Codec == NULL:
                 raise IOError("Unable to get decoder")
             if (self.Codec.capabilities & CODEC_CAP_TRUNCATED) and (self.support_truncated!=0):
-                self.CodecCtx.flags = self.CodecCtx.flags | CODEC_FLAG_TRUNCATED
+                self.CodecCtx.flags = self.CodecCtx.flags | CODEC_FLAG_TRUNCATED     
             avcodec_open(self.CodecCtx, self.Codec)        
+            if args.has_key("hurry_mode"):
+               self.CodecCtx.hurry_up=2
+               self.CodecCtx.skip_loop_filter=32
+               self.CodecCtx.skip_frame=32
+               self.CodecCtx.skip_idct=32
+            if args.has_key("skip_frame"):
+               self.CodecCtx.skip_frame=args["skip_frame"]
+            if args.has_key("skip_idct"):
+               self.CodecCtx.skip_idct=args["skip_idct"]	       	    
+            if args.has_key("skip_loop_filter"):
+               self.CodecCtx.skip_loop_filter=args["skip_loop_filter"]	     
+            if args.has_key("hurry_up"):
+               self.CodecCtx.skip_loop_filter=args["hurry_up"]
+            if args.has_key("dct_algo"):
+               self.CodecCtx.dct_algo=args["dct_algo"]	       
+            if args.has_key("idct_algo"):
+               self.CodecCtx.idct_algo=args["idct_algo"]	       	       
         
         def set_observer(self, observer=None):
             self.observer=observer
@@ -1286,6 +1306,8 @@ cdef class VideoTrack(Track):
             self.videoframebanksz=videoframebanksz
             self.width = self.CodecCtx.width
             self.height = self.CodecCtx.height
+            #self.CodecCtx.skip_frame=skip_frame
+            #self.CodecCtx.skip_idct=skip_frame
             self.dest_width=(dest_width==-1) and self.width or dest_width
             self.dest_height=(dest_height==-1) and self.height or dest_height
             numBytes=avpicture_get_size(self.pixel_format, self.dest_width, self.dest_height)
@@ -1513,8 +1535,11 @@ cdef class VideoTrack(Track):
                     
         def seek_to_pts(self,  unsigned long long int pts):
             #print "seeked pts :", pts
-            #print "start : ",  self.stream.start_time
-            pts-=self.stream.start_time
+            if (pts<self.stream.start_time):
+               print "ignoring start time / seeking maybe invalid (MPEG TS ?)"
+               #pts+=self.stream.start_time
+            else: 
+               pts-=self.stream.start_time
             self.vr.seek_to(pts)
             
         def get_fps(self):
@@ -1544,6 +1569,10 @@ cdef class VideoTrack(Track):
         def get_current_frame_frameno(self):
                 am=self.smallest_videobank_time()
                 return self.videoframebank[am][1]
+		
+        def get_current_frame_type(self):
+                am=self.smallest_videobank_time()
+                return self.videoframebank[am][3]		
         
         def _get_current_frame_frameno(self):
             return self.CodecCtx.frame_number
@@ -1556,7 +1585,8 @@ cdef class VideoTrack(Track):
             self.pts=av_rescale(pts,AV_TIME_BASE * <int64_t>self.stream.time_base.num,self.stream.time_base.den)
             #print "unparsed pts", pts,  self.stream.time_base.num,self.stream.time_base.den,  self.pts
             self.frameno+=1
-            self.videoframebank.append((self.pts,self.frameno,self._internal_get_current_frame()))
+            frametype=self.frame.pict_type
+            self.videoframebank.append((self.pts,self.frameno,self._internal_get_current_frame(),frametype))
             if (len(self.videoframebank)>self.videoframebanksz):
                 self.videoframebank.pop(0)
             
@@ -1586,6 +1616,7 @@ cdef class FFMpegReader(AFFMpegReader):
         self.prepacket=<AVPacket *>None
         self.packet=&self.packetbufa
         self.observers_enabled=True
+        self.errjmppts=0
     def __del__(self):
         self.close()
 
@@ -1701,7 +1732,7 @@ cdef class FFMpegReader(AFFMpegReader):
           self.FormatCtx=NULL
 	
     cdef read_packet(self):
-        cdef bool packet_processed=False
+        cdef bint packet_processed=False
         while not packet_processed:
             #ret = av_read_frame(self.FormatCtx,self.packet)
             #if ret < 0:
@@ -1745,6 +1776,18 @@ cdef class FFMpegReader(AFFMpegReader):
                 """
                 ret = av_read_frame(self.FormatCtx,self.prepacket)
                 if ret < 0:
+                  #for xerrcnts in range(5,1000):
+                  #  if (not self.errjmppts):
+                  #      self.errjmppts=self.tracks[0].get_cur_pts()
+                  #  no=self.errjmppts+xerrcnts*(AV_TIME_BASE/50)
+                  #  sys.stderr.write("Unable to read frame:trying to skip some packet and trying again.."+str(no)+","+str(xerrcnts)+"...\n")
+                  #  av_seek_frame(self.FormatCtx,-1,no,0)
+                  #  ret = av_read_frame(self.FormatCtx,self.prepacket)
+                  #  if (ret!=-5): 
+                  #      self.errjmppts=no
+                  #      print "solved : ret=",ret
+                  #      break
+                  #if ret < 0:
                     raise IOError("Unable to read frame: %d" % ret)
 
     def read_until_next_frame(self, calltrack=0):
@@ -1769,6 +1812,7 @@ cdef class FFMpegReader(AFFMpegReader):
         cdef int ret=0
         av_read_frame_flush(self.FormatCtx);
         ppts=pts-AV_TIME_BASE # seek a little bit before... and then manually go direct frame
+        print ppts, pts
         ret = av_seek_frame(self.FormatCtx,-1,ppts,  AVSEEK_FLAG_BACKWARD)#|AVSEEK_FLAG_ANY)
         if ret < 0:
             raise IOError("Unable to seek: %d" % ret)
