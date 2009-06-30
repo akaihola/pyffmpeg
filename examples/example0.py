@@ -10,8 +10,11 @@ from PyQt4 import QtCore
 from PyQt4 import QtGui
 
 import sys, numpy
-import ossaudiodev as oss
-
+try:
+  import ossaudiodev as oss
+except:
+  import oss
+  
 try:
     LazyDisplayQt__imgconvarray={
                       1:QtGui.QImage.Format_Indexed8,
@@ -76,7 +79,7 @@ tracks[0].set_observer(ld.f)
 
 ao=oss.open_audio()
 ao.stereo(1)
-ao.speed(tracks[1].get_sample_rate())
+ao.speed(tracks[1].get_samplerate())
 ao.format(oss.AFMT_S16_LE)
 tracks[1].set_observer(lambda x:ao.write(x[0].data))
 tracks[0].seek_to_seconds(10)

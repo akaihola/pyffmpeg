@@ -1490,9 +1490,6 @@ cdef class VideoTrack(Track):
             numBytes=avpicture_get_size(pixformat, width,height)
             rgb_buffer = <char *>PyMem_Malloc(numBytes)
             avpicture_fill(<AVPicture *>pFrame, rgb_buffer, pixformat,width, height)
-#            img_convert(<AVPicture *>pFrame, pixformat,
-#                              <AVPicture *>frame, pCodecCtx.pix_fmt, width,
-#                              height)
             sws_scale(self.convert_ctx, frame.data, frame.linesize, 0, self.height, <uint8_t **>pFrame.data, pFrame.linesize)
             if (pFrame==NULL):
               raise Exception,("software scale conversion error")
@@ -1812,7 +1809,7 @@ cdef class FFMpegReader(AFFMpegReader):
         cdef int ret=0
         av_read_frame_flush(self.FormatCtx);
         ppts=pts-AV_TIME_BASE # seek a little bit before... and then manually go direct frame
-        print ppts, pts
+        #print ppts, pts
         ret = av_seek_frame(self.FormatCtx,-1,ppts,  AVSEEK_FLAG_BACKWARD)#|AVSEEK_FLAG_ANY)
         if ret < 0:
             raise IOError("Unable to seek: %d" % ret)
