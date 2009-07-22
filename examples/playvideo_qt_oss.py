@@ -26,7 +26,8 @@ except:
                       1:QtGui.QImage.Format_Indexed8,
                       4:QtGui.QImage.Format_RGB32
                       }
-qapp = QtGui.QApplication(sys.argv)
+
+                      qapp = QtGui.QApplication(sys.argv)
 qapp.processEvents()
 
 
@@ -42,8 +43,6 @@ class LazyDisplayQt(QtGui.QMainWindow):
         def f(self,thearray):
             self._i=thearray.astype(numpy.uint8).copy('C')
             self.i=QtGui.QImage(self._i.data,self._i.shape[1],self._i.shape[0],self.imgconvarray[self._i.shape[2]])
-            if (self._i.shape[2]==1):
-                self.i.setColorTable(self.colortable)
             self.update()
             qapp.processEvents()
         def paintEvent(self, ev):
@@ -83,6 +82,7 @@ ao.speed(tracks[1].get_samplerate())
 ao.format(oss.AFMT_S16_LE)
 tracks[1].set_observer(lambda x:ao.write(x[0].data))
 tracks[0].seek_to_seconds(10)
+ao.channels(tracks[1].get_channels())
 
 
 ## play the movie !

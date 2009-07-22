@@ -94,9 +94,9 @@ ao=oss.open('w')
 
 ao.speed(tracks[1].get_samplerate())
 ao.setfmt(oss.AFMT_S16_LE)
+ao.channels(tracks[1].get_channels())
 tracks[1].set_observer(lambda x:ao.write(x[0].data))
 tracks[0].seek_to_seconds(10)
-
 
 
 gtk.main()
