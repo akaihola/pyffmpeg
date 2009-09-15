@@ -34,8 +34,8 @@
 #     * More examples
 #
 #    Abilities
-#     * Frame seeking 
-#  
+#     * Frame seeking
+#
 #    Changed compared with pyffmpeg:
 #     * Clean up destructors
 #     * Changed PIL to Numpy
@@ -60,6 +60,7 @@
 import sys
 import threading
 import numpy
+import traceback
 from numpy import ndarray
 #import Image
 
@@ -423,6 +424,34 @@ cdef extern from "avcodec.h":
     void avcodec_flush_buffers(AVCodecContext *avctx)
 
 
+#class DLock:
+#    def __init__(self):
+#        self.l=threading.Lock()
+#    def acquire(self,*args,**kwargs):
+#        sys.stderr.write("MTX:"+str((self, "A", args, kwargs))+"\n")
+#        try:
+#            raise Exception
+#        except:
+#            if (hasattr(sys,"last_traceback")):
+#                traceback.print_tb(sys.last_traceback)
+#            else:
+#                traceback.print_tb(sys.exc_traceback)
+#        sys.stderr.flush()
+#        sys.stdout.flush()
+#        #return self.l.acquire(*args,**kwargs)
+#        return True
+#    def release(self):
+#        sys.stderr.write("MTX:"+str((self, "R"))+"\n")
+#        try:
+#            raise Exception
+#        except:
+#            if (hasattr(sys,"last_traceback")):
+#                traceback.print_tb(sys.last_traceback)
+#            else:
+#                traceback.print_tb(sys.exc_traceback)
+#        sys.stderr.flush()
+#        sys.stdout.flush()
+#        #return self.l.release()
 
 cdef extern from "avformat.h":
     struct AVFrac:
@@ -634,24 +663,32 @@ cdef class AudioQueue:
     cdef unsigned long long _totallen # len of buffer
     cdef long long _newframepos # new frame starts at...
     cdef int _destframesize
+    cdef int _destframeinterval
+    cdef int _destframeoverlap
     cdef object _destframequeue
     cdef float tps
     cdef float samplerate
     cdef float speedrate[2]
     cdef object mutex
-    def  __init__(self,limitsz=-1,samplerate=44100,tps=1000,destframesize=0,destframequeue=None):
+    def  __init__(self,limitsz=-1,samplerate=44100,tps=1000,destframesize=0, destframeoverlap=0,destframequeue=None):
         self.limitsz=limitsz
         self.l=[]
         self._off=0
         self._totallen=0
         self._newframepos=0
         self._destframesize=destframesize
+        self._destframeoverlap=destframeoverlap
+        self._destframeinterval=destframesize-destframeoverlap
+        #print destframesize,destframeoverlap
+        assert((self._destframeinterval>0) or destframesize==0)
         self._destframequeue=destframequeue
         self.tps=tps
         self.samplerate=samplerate
         self.speedrate[0]=tps/samplerate
         self.speedrate[1]=1./samplerate # how much seconds does elapse per sample
         self.mutex=threading.Lock()
+    def get_len(self):
+        return self.limitsz
     def get(self,wait=True):
         if (self.mutex.acquire(wait)):
             try:
@@ -685,12 +722,25 @@ cdef class AudioQueue:
                 # we are already mutex protected here
             #print "dfsz=", self._destframesize,  self._totallen,  self._newframepos
         if (self._destframesize):
-            newframes=((self._totallen-self._newframepos)//self._destframesize)-((self._totallen-(writesz+self._newframepos))//self._destframesize)
-            #print "#",newframes,  self._totallen, self._newframepos
-            for nf in  range(newframes):
+            #newframes=((self._totallen-self._newframepos)//(self._destframeinterval))-((self._totallen-(writesz+self._newframepos))//(self._destframeinterval))
+            #newframes-=(self._destframeoverlap/self._destframeinterval)
+            #print "# NEWFRAMES, TL, NFP",newframes,  self._totallen, self._newframepos
+            while ((self._totallen-self._newframepos) > self._destframesize):
                     # we can add frames
+                #print "#  TL, NFP,INT",  self._totallen, self._newframepos,self._destframeinterval
+                #print  ((self._totallen+writesz-self._newframepos) , self._destframesize)
+                #print self._destframequeue.get_len()
+                #raise Exception,"Will lockx"
+                #sys.stderr.write( "PUSHING...\n")
+                #sys.stderr.write(str(self))
+                #sys.stderr.write(str(self._destframequeue))
+#                sys.stderr.write(str(self.mutex))
+#                sys.stderr.write(str(self._destframequeue.mutex))
                 self._destframequeue.putforce((self.__getslice(self._newframepos,(self._newframepos+self._destframesize)),self._timeat(self._newframepos),self._timeat(self._newframepos,t=1) ))
-                self._newframepos+=self._destframesize
+                #print "#  TL, NFP",  self._totallen, self._newframepos
+                self._newframepos+=self._destframeinterval
+                #print "#  TL, NFP",  self._totallen, self._newframepos
+                #sys.stderr.write(str((self._newframepos, self._totallen)))
                 assert(self._newframepos>=0)
                 assert(self._newframepos<=self._totallen)
     def put(self,it,wait=True):
@@ -705,9 +755,11 @@ cdef class AudioQueue:
         else:
             raise Queue_Full
     def putforce(self,it,wait=True):
-        #print self._newframepos
+        #print self._newframepos, self.l, self.limitsz
         if (self.mutex.acquire(wait)):
+            #print (self.limitsz==-1) or ((self.limitsz!=-1) and (len(self.l)<=self.limitsz))
             if ((self.limitsz!=-1) and (len(self.l)>=self.limitsz)):
+                #sys.stderr.write("warning : audio queue overloaded\n")
                 x=self.l.pop(0)
                 #print "$",   self._totallen, self._newframepos
                 self._totallen-=x[0].shape[0]
@@ -724,8 +776,6 @@ cdef class AudioQueue:
             self._totallen+=it[0].shape[0]
             self._check_push_frame(it[0].shape[0])
             self.mutex.release()
-        else:
-            raise Queue_Full
     def get_nowait(self):
         return self.get(wait=False)
     def put_nowait(self,it):
@@ -933,12 +983,12 @@ cdef class AudioQueue:
             self.mutex.release()
             return sl
     def print_buffer_stats(self,prefix=""):
-        print prefix+" limitsz", self.limitsz
-        print prefix+" offset (mintime)", self._off
-        print prefix+" offset (maxtime)", self._off+ self._totallen
-        print prefix+" length", self._totallen
-        print prefix+" time bounds : ", self.get_time_bounds()
-        print prefix+" sampletime bounds : ", self.get_sampletime_bounds()
+        sys.stderr.write(  prefix+" limitsz"+ str(self.limitsz)+"\n")
+        sys.stderr.write(  prefix+" offset (mintime)"+str( self._off)+"\n")
+        sys.stderr.write(  prefix+" offset (maxtime)"+str( self._off+ self._totallen)+"\n")
+        sys.stderr.write(  prefix+" length"+str( self._totallen)+"\n")
+        sys.stderr.write(  prefix+" time bounds : "+str( self.get_time_bounds())+"\n")
+        sys.stderr.write(  prefix+" sampletime bounds : "+str( self.get_sampletime_bounds())+"\n")
 
 
 
@@ -1017,7 +1067,7 @@ cdef class AFFMpegReader:
 cdef class Track:
     cdef AFFMpegReader vr
     cdef int no
-    #cdef AVFormatContext *FormatCtx
+    ## cdef AVFormatContext *FormatCtx
     cdef AVCodecContext *CodecCtx
     cdef AVCodec *Codec
     cdef AVFrame *frame
@@ -1039,6 +1089,9 @@ cdef class Track:
 
     def get_no(self):
         return self.no
+
+    def __len__(self):
+        return self.stream.nb_frames
 
     def duration(self):
         return self.stream.duration
@@ -1090,18 +1143,18 @@ cdef class Track:
             self.do_check_start=1
 
     def check_start(self):
-       if (self.do_check_start):
+        if (self.do_check_start):
             try:
-              self.seek_to_pts(0)
-              self.vr.read_until_next_frame()
-              sys.stderr.write("start time checked : pts = %d , declared was : %d\n"%(self.pts,self.start_time))
-              self.start_time=self.pts
-              self.seek_to_pts(0)
-              self.do_check_start=0
+                self.seek_to_pts(0)
+                self.vr.read_until_next_frame()
+                sys.stderr.write("start time checked : pts = %d , declared was : %d\n"%(self.pts,self.start_time))
+                self.start_time=self.pts
+                self.seek_to_pts(0)
+                self.do_check_start=0
             except:
-              pass
-       else:
-          pass
+                pass
+        else:
+            pass
 
     def set_observer(self, observer=None):
         self.observer=observer
@@ -1117,10 +1170,12 @@ cdef class Track:
         if (self.Codec.capabilities & CODEC_CAP_TRUNCATED) and (self.support_truncated!=0):
             self.CodecCtx.flags = self.CodecCtx.flags | CODEC_FLAG_TRUNCATED
         ret = avcodec_open(self.CodecCtx, self.Codec)
+
     def close(self):
         if (self.CodecCtx!=NULL):
             avcodec_close(self.CodecCtx)
         self.CodecCtx=NULL
+
     def prepare_to_be_just_in_time(self):
         pass
 
@@ -1134,6 +1189,27 @@ cdef class Track:
 
     cdef process_packet(self, AVPacket * pkt):
         pass
+
+    def seek_to_seconds(self, seconds ):
+        pts = (<float>seconds) * (<float>AV_TIME_BASE)
+        #pts=av_rescale(seconds*AV_TIME_BASE, self.stream.time_base.den, self.stream.time_base.num*AV_TIME_BASE)
+        self.seek_to_pts(pts)
+
+    def seek_to_pts(self,  unsigned long long int pts):
+        #print "seeked pts :", pts
+        #sys.stderr.write( "seeking to PTS %d (start_time=%d (%x)) ?\n"%(pts,self.start_time, self.start_time))
+
+        if (self.start_time!=AV_NOPTS_VALUE):
+            #if (pts<self.start_time):
+            #   print "seek before start_time / ignoring start time / seeking maybe invalid (MPEG TS ?)"
+            #    #pts+=self.stream.start_time
+            #else:
+            #  #pts-=self.start_time
+            pts+=self.start_time
+            #  #pts+=(self.start_time*self.get_fps())
+            #  #pts+=(self.start_time*15)
+        #sys.stderr.write( "seeking to PTS %d (start_time=%d (%x)) \n"%(pts,self.start_time, self.start_time))
+        self.vr.seek_to(pts)
 
 
 
@@ -1153,7 +1229,7 @@ cdef class AudioPacketDecoder:
         if (first):
             self.audio_pkt_data = <uint8_t *>pkt.data;
             self.audio_pkt_size = pkt.size;
-
+        
         while(self.audio_pkt_size > 0) :
             data_size = buf_size
             len1 = avcodec_decode_audio2(aCodecCtx, <int16_t *>audio_buf, &data_size, <char *>self.audio_pkt_data, self.audio_pkt_size);
@@ -1172,7 +1248,7 @@ cdef class AudioPacketDecoder:
             n = 2 * nchannels
             audio_clock[0] += ((<double>data_size) / (<double>(n * samplerate)))
             return data_size;
-
+        
         if(pkt.data):
             av_free_packet(pkt)
         return -1
@@ -1186,16 +1262,25 @@ cdef class AudioTrack(Track):
     cdef int data_size
     cdef int rdata_size
     cdef int sdata_size
+    cdef int dest_frame_overlap
+    cdef int dest_frame_size
+    cdef int hardware_queue_len
     cdef object lf
     cdef int os
     cdef object audio_buf # buffer used in decoding of  audio
-    def init(self, tps=30,  **args):
+
+    def init(self, tps=30, hardware_queue_len=5, dest_frame_size=0, dest_frame_overlap=0, **args):
         Track.init(self,  **args)
         self.tps=tps
-        self.audiohq=AudioQueue(5)  # hardware queue : agglomerated and time marked packets of a specific size (based on audioq)
-        self.audioq=AudioQueue(12,tps=self.tps,
+        self.hardware_queue_len=hardware_queue_len
+        self.dest_frame_size=dest_frame_size
+        self.dest_frame_overlap=dest_frame_overlap
+        self.audiohq=AudioQueue(limitsz=self.hardware_queue_len)  # hardware queue : agglomerated and time marked packets of a specific size (based on audioq)
+        self.audioq=AudioQueue(limitsz=12,tps=self.tps,
                               samplerate=self.CodecCtx.sample_rate,
-                              destframesize=self.CodecCtx.sample_rate//self.tps,destframequeue=self.audiohq)  # queue of  numpyarray containing soundbuffers to be played that is             self.audio_buf=numpy.ones((AVCODEC_MAX_AUDIO_FRAME_SIZE*2,self.CodecCtx.channels),dtype=numpy.int16 )
+                              destframesize=self.dest_frame_size if (self.dest_frame_size!=0) else (self.CodecCtx.sample_rate//self.tps),
+                              destframeoverlap=self.dest_frame_overlap,
+                              destframequeue=self.audiohq)  # queue of  numpyarray containing soundbuffers to be played that is             self.audio_buf=numpy.ones((AVCODEC_MAX_AUDIO_FRAME_SIZE*2,self.CodecCtx.channels),dtype=numpy.int16 )
         self.data_size=AVCODEC_MAX_AUDIO_FRAME_SIZE*2 # ok let's try for try
         self.sdata_size=0
         self.rdata_size=self.data_size-self.sdata_size
@@ -1205,6 +1290,19 @@ cdef class AudioTrack(Track):
         self.os=0
         self.lf=None
 
+    def reset_tps(self,tps):
+        self.tps=tps
+        self.audiohq=AudioQueue(limitsz=self.hardware_queue_len)  # hardware queue : agglomerated and time marked packets of a specific size (based on audioq)
+        self.audioq=AudioQueue(limitsz=12,tps=self.tps,
+                              samplerate=self.CodecCtx.sample_rate,
+                              destframesize=self.dest_frame_size if (self.dest_frame_size!=0) else (self.CodecCtx.sample_rate//self.tps),			      
+#                              destframesize=self.dest_frame_size or (self.CodecCtx.sample_rate//self.tps),
+                              destframeoverlap=self.dest_frame_overlap,
+                              destframequeue=self.audiohq)
+
+
+    def get_cur_pts(self):
+        return self.pts
 
     def reset_buffers(self):
         ## violent solution but the most efficient so far...
@@ -1236,8 +1334,12 @@ cdef class AudioTrack(Track):
         return self.audiohq
 
     def __read_subsequent_audio(self):
-        """ we will push in the audio queue the datas that appear after a specified frame"""
-        self.vr.read_until_next_frame()
+        """ we will push in the audio queue the datas that appear after a specified frame, or until the audioqueue is full"""
+        calltrack
+        if (self.vr.tracks[0].get_no()==self.get_no()):
+            calltrack=-1
+        self.vr.read_until_next_frame(calltrack=calltrack)
+        self.audioq.print_buffer_stats()
 
     cdef process_packet(self, AVPacket * pkt):
         cdef double xpts
@@ -1550,27 +1652,6 @@ cdef class VideoTrack(Track):
     # time function
     #
 
-    def seek_to_seconds(self, seconds ):
-        pts = (<float>seconds) * (<float>AV_TIME_BASE)
-        #pts=av_rescale(seconds*AV_TIME_BASE, self.stream.time_base.den, self.stream.time_base.num*AV_TIME_BASE)
-        self.seek_to_pts(pts)
-
-    def seek_to_pts(self,  unsigned long long int pts):
-        #print "seeked pts :", pts
-        #sys.stderr.write( "seeking to PTS %d (start_time=%d (%x)) ?\n"%(pts,self.start_time, self.start_time))
-
-        if (self.start_time!=AV_NOPTS_VALUE):
-          #if (pts<self.start_time):
-          #   print "seek before start_time / ignoring start time / seeking maybe invalid (MPEG TS ?)"
-          #    #pts+=self.stream.start_time
-          #else:
-          #  #pts-=self.start_time
-          pts+=self.start_time
-          #  #pts+=(self.start_time*self.get_fps())
-          #  #pts+=(self.start_time*15)
-        #sys.stderr.write( "seeking to PTS %d (start_time=%d (%x)) \n"%(pts,self.start_time, self.start_time))
-        self.vr.seek_to(pts)
-
     def get_fps(self):
         """ return the number of frame per second of the video """
         return (<float>self.stream.r_frame_rate.num / <float>self.stream.r_frame_rate.den)
@@ -1632,6 +1713,8 @@ cdef class VideoTrack(Track):
 
 cdef class FFMpegReader(AFFMpegReader):
     """ Reads an Audio Video File as a whole """
+    cdef object default_audio_track
+    cdef object default_video_track
     def __new__(self):
         self.filename = None
         self.tracks=[]
@@ -1646,6 +1729,9 @@ cdef class FFMpegReader(AFFMpegReader):
         self.packet=&self.packetbufa
         self.observers_enabled=True
         self.errjmppts=0
+        self.default_audio_track=None
+        self.default_video_track=None
+
     def __del__(self):
         self.close()
 
@@ -1700,6 +1786,7 @@ cdef class FFMpegReader(AFFMpegReader):
             raise IOError("Unable to open file %s" % filename)
         self.filename = filename
         self.__finalize_open(track_selector)
+
     def __finalize_open(self, track_selector=None):
         cdef AVCodecContext * CodecCtx
         cdef Track st
@@ -1744,13 +1831,19 @@ cdef class FFMpegReader(AFFMpegReader):
             CodecCtx = self.FormatCtx.streams[trackno].codec
             if (s[0]==CODEC_TYPE_VIDEO):
                 st=VideoTrack()
+                if (self.default_video_track==None):
+                    self.default_video_track=st
             elif (s[0]==CODEC_TYPE_AUDIO):
                 st=AudioTrack()
+                if (self.default_audio_track==None):
+                    self.default_audio_track=st
             else:
                 raise "unknown type of Track"
             st.init0(self,trackno,  CodecCtx) ## here we are passing cpointers so we do a C call
             st.init(**s[2])## here we do a python call
             self.tracks.append(st)
+        if (self.default_audio_track!=None and self.default_video_track!=None):
+            self.default_audio_track.reset_tps(self.default_video_track.get_fps())
         for t in self.tracks:
             t.check_start() ### this is done only if asked
 
@@ -1792,6 +1885,9 @@ cdef class FFMpegReader(AFFMpegReader):
         self.tracks[0].get_next_frame()
         return self.get_current_frame()
 
+    def __len__(self):
+        return len(self.tracks[0])
+
     def process_current_packet(self):
         """ dispatch the packet to the correct track processor """
         cdef Track s
@@ -1821,18 +1917,30 @@ cdef class FFMpegReader(AFFMpegReader):
             #if ret < 0:
             raise IOError("Unable to read frame: %d" % ret)
 
-    def read_until_next_frame(self, calltrack=0):
+    def read_until_next_frame(self, calltrack=0,maxerrs=10, maxread=10):
         """ read all packets until a frame for the Track "calltrack" arrives """
         try :
-            while self.prepacket.stream_index != self.tracks[calltrack].get_no():
+            while (maxread>0) (calltrack==-1) or self.prepacket.stream_index != self.tracks[calltrack].get_no():
                 if (self.prepacket==<AVPacket *>None):
                     self.prepacket=&self.packetbufa
                     self.packet=&self.packetbufb
                     self.__prefetch_packet()
                 self.packet=self.prepacket
-                self.__prefetch_packet()
+                cont=True
+                while (cont):
+                    try:
+                        self.__prefetch_packet()
+                        cont=False
+                    except:
+                        maxerrs-=1
+                        if (maxerrs<=0):
+                            raise
                 self.process_current_packet()
+                maxread-=1
         except Queue_Full:
+            return False
+        except IOError:
+            sys.stderr.write("IOError")
             return False
         return True
 
@@ -1840,6 +1948,10 @@ cdef class FFMpegReader(AFFMpegReader):
         return self.tracks
 
     def seek_to(self, pts):
+        """
+          Globally seek the stream to a specified position
+        """
+        sys.stderr.write("Seeking to PTS=%d\n"%pts)
         cdef int ret=0
         av_read_frame_flush(self.FormatCtx);
         ppts=pts-AV_TIME_BASE # seek a little bit before... and then manually go direct frame
@@ -1901,6 +2013,14 @@ cdef class FFMpegReader(AFFMpegReader):
         ## ######################################
         self.prepare_to_be_just_in_time()
 
+
+    def __getitem__(self,int pos):
+        self.seek_to((pos/30.)*AV_TIME_BASE)
+        sys.stderr.write("Trying to get frame\n")
+        ri=self.get_current_frame()
+        sys.stderr.write("Ok\n")
+        sys.stderr.write("ri=%s\n"%(repr(ri)))
+        return ri
 
     def prepare_to_be_just_in_time(self):
         """ fills in all buffers in the tracks so that all necessary datas are available"""

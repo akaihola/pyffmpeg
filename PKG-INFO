@@ -7,4 +7,4 @@ Author: Bertrand Nouvel
 Author-email: nouvel@nii.ac.jp
 License: GPL
 Description: Python Wrapper for FFMPEG
-Platform: UNKNOWN
+Platform: ALL
