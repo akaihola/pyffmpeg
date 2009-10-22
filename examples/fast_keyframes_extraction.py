@@ -10,7 +10,7 @@ from PyQt4 import QtCore
 from PyQt4 import QtGui
 
 import sys, numpy
-import alsaaudio
+#import alsaaudio
 
 try:
     LazyDisplayQt__imgconvarray={
@@ -61,7 +61,7 @@ mp=FFMpegReader()
 
 ## open an audio video file
 vf=sys.argv[1]
-mp.open(vf,TS_VIDEO_GRAY8)
+mp.open(vf,TS_VIDEO_RGB24)
 tracks=mp.get_tracks()
 
 ## connect video and audio to their respective device
