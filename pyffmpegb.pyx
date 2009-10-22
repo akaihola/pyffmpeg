@@ -1724,7 +1724,7 @@ cdef class FFMpegReader(AFFMpegReader):
     cdef object default_audio_track
     cdef object default_video_track
     cdef int with_jit
-    def __new__(self,with_jit=False):
+    def __new__(self,with_jit=True):
         self.filename = None
         self.tracks=[]
         self.ctracks=NULL
@@ -1831,7 +1831,7 @@ cdef class FFMpegReader(AFFMpegReader):
                             trackb+=1
                         else:
                             #DEBUG("associated "+str(s)+" to "+str(i))
-                            sys.stdin.readline()
+                            #sys.stdin.readline()
                             trackno = i
                             break
             else:

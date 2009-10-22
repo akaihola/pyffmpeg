@@ -38,8 +38,8 @@ class LazyDisplayQt(QtGui.QMainWindow):
         def __del__(self):
             self.hide()
         def f(self,thearray):
-            print "ARRAY",
-            print thearray
+            #print "ARRAY",
+            #print thearray
             self._i=thearray.astype(numpy.uint8).copy('C')
             self.i=QtGui.QImage(self._i.data,self._i.shape[1],self._i.shape[0],self.imgconvarray[self._i.shape[2]])
             self.update()
