@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from distutils.core import setup
 from distutils.extension import Extension
 from Cython.Distutils import build_ext
@@ -14,6 +15,16 @@ ffmpegpath="../ffmpeg"
 
 #./configure --enable-shared --enable-swscale --enable-gpl --enable-memalign-hack #--enable-nonfree 
 #print dir(nd)
+
+
+url="http://ffmpeg.arrozcru.org/builds/bin/ffmpeg-latest-gpl-shared-dev.tar.bz2"
+
+url7zip="http://downloads.sourceforge.net/sevenzip/7za465.zip"
+urlffmpeg="http://ffmpeg.arrozcru.org/autobuilds/ffmpeg/mingw32/shared/fmpeg-latest-gpl-shared-dev.7z"
+"""
+wget -nd  url7zip
+unzip 7za.zip
+"""
 
 setup(
     cmdclass = {'build_ext': build_ext},

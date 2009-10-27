@@ -1338,7 +1338,7 @@ cdef class AudioTrack(Track):
         return self.audiohq
     def __read_subsequent_audio(self):
         """ we will push in the audio queue the datas that appear after a specified frame, or until the audioqueue is full"""
-        calltrack
+        calltrack=self.get_no()
         #DEBUG("read_subsequent_audio")
         if (self.vr.tracks[0].get_no()==self.get_no()):
             calltrack=-1
