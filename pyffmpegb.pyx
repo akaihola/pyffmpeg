@@ -92,11 +92,11 @@ cimport numpy as np
 cdef extern from "numpy/arrayobject.h":
     void *PyArray_DATA(np.ndarray arr)
 
-cdef extern from "mathematics.h":
+cdef extern from "libavutil/mathematics.h":
     int64_t av_rescale(int64_t a, int64_t b, int64_t c)
 
 
-cdef extern from "avio.h":
+cdef extern from "libavformat/avio.h":
     struct ByteIOContext:
         pass
 
@@ -117,7 +117,7 @@ cdef extern from "avio.h":
                   #offset_t (*seek)(void *opaque, offset_t offset, int whence))
 
 
-cdef extern from "avutil.h":
+cdef extern from "libavutil/avutil.h":
     cdef enum PixelFormat:
         PIX_FMT_NONE= -1,
         PIX_FMT_YUV420P,   #< Planar YUV 4:2:0 (1 Cr & Cb sample per 2x2 Y samples)
@@ -144,7 +144,7 @@ cdef extern from "avutil.h":
         PIX_FMT_UYVY411,   #< Packed pixel, Cb Y0 Y1 Cr Y2 Y3
         PIX_FMT_NB,
 
-cdef extern from "avcodec.h":
+cdef extern from "libavcodec/avcodec.h":
     # use an unamed enum for defines
     cdef enum:
         AVSEEK_FLAG_BACKWARD = 1 #< seek backward
@@ -453,7 +453,7 @@ cdef extern from "avcodec.h":
 #        sys.stdout.flush()
 #        #return self.l.release()
 
-cdef extern from "avformat.h":
+cdef extern from "libavformat/avformat.h":
     struct AVFrac:
         int64_t val, num, den
 
@@ -581,7 +581,7 @@ __registered = 0
 
 cdef extern void av_free(void *ptr)
 
-cdef extern from "swscale.h":
+cdef extern from "libswscale/swscale.h":
     cdef enum:
         SWS_FAST_BILINEAR,
         SWS_BILINEAR,
