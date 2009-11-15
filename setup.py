@@ -17,7 +17,7 @@ def static_resolver(libs):
 
     for lib in libs:
         try:
-            pc = open(path_join(ffmpegpath, 'lib', 'pkgconfig', 'lib' + lib + '.pc')).readlines()
+            pc = open(path_join(ffmpegpath, 'lib', 'pkgconfig', 'lib' + lib + '.pc'))
         except IOError:
             continue
 
