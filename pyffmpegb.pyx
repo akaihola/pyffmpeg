@@ -413,7 +413,7 @@ cdef extern from "libavcodec/avcodec.h":
                          char *buf, int buf_size)
     int avcodec_decode_audio2(AVCodecContext *avctx, #AVFrame *picture,
                          int16_t * samples, int * frames,
-                         char *buf, int buf_size)
+                         void *buf, int buf_size)
     int avpicture_fill(AVPicture *picture, void *ptr,
                    int pix_fmt, int width, int height)
     AVFrame *avcodec_alloc_frame()
@@ -1239,7 +1239,7 @@ cdef class AudioPacketDecoder:
         
         while(self.audio_pkt_size > 0) :
             data_size = buf_size
-            len1 = avcodec_decode_audio2(aCodecCtx, <int16_t *>audio_buf, &data_size, <char *>self.audio_pkt_data, self.audio_pkt_size);
+            len1 = avcodec_decode_audio2(aCodecCtx, <int16_t *>audio_buf, &data_size, <uint8_t *>self.audio_pkt_data, self.audio_pkt_size);
             if(len1 < 0) :
             # if error, skip frame
                 self.audio_pkt_size = 0;
@@ -1620,7 +1620,7 @@ cdef class VideoTrack(Track):
         height = self.dest_height
         numBytes=avpicture_get_size(pixformat, width,height)
         rgb_buffer = <char *>PyMem_Malloc(numBytes)
-        avpicture_fill(<AVPicture *>pFrame, rgb_buffer, pixformat,width, height)
+        avpicture_fill(<AVPicture *>pFrame, <uint8_t *>rgb_buffer, pixformat,width, height)
         sws_scale(self.convert_ctx, frame.data, frame.linesize, 0, self.height, <uint8_t **>pFrame.data, pFrame.linesize)
         if (pFrame==NULL):
             raise Exception,("software scale conversion error")
@@ -1647,7 +1647,7 @@ cdef class VideoTrack(Track):
 
         width = self.dest_width
         height = self.dest_height
-        avpicture_fill(<AVPicture *>pFramePixFormat, buf, self.pixel_format,   width, height)
+        avpicture_fill(<AVPicture *>pFramePixFormat, <uint8_t *>buf, self.pixel_format,   width, height)
         sws_scale(self.convert_ctx, frame.data, frame.linesize, 0, self.height, <uint8_t**>pFramePixFormat.data, pFramePixFormat.linesize)
         return pFramePixFormat
 
@@ -2130,7 +2130,7 @@ class VideoStream:
         self.vr.seek_to_pts(pts)
         return self.vr.get_current_frame()
     def GetFrameNo(self, fno):
-        self.vr.seek_to_frameno(fno)
+        self.tv[0].seek_to_frameno(fno)
         return self.vr.get_current_frame()
     def GetCurrentFrame(self, fno):
         return self.vr.get_current_frame()
