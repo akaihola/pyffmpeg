@@ -1962,7 +1962,7 @@ cdef class FFMpegReader(AFFMpegReader):
         """ read all packets until a frame for the Track "calltrack" arrives """
         #DEBUG("read untiil next fame")
         try :
-            while (maxread>0)  and (calltrack==-1) or self.prepacket.stream_index != self.tracks[calltrack].get_no():
+            while ((maxread>0)  and (calltrack==-1) or (self.prepacket.stream_index != (self.tracks[calltrack].get_no()))):
                 if (self.prepacket==<AVPacket *>None):
                     self.prepacket=&self.packetbufa
                     self.packet=&self.packetbufb
