@@ -1,30 +1,18 @@
 
 """
 # #######################################################################################
-# Pyffmpegb
+# Pyffmpeg 
 #
 # Copyright (C) 2008-2009 Bertrand Nouvel <nouvel@nii.ac.jp>
 #   Japanese French Laboratory for Informatics
 #   CNRS
 #
 # #######################################################################################
-# This program is free software; you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation; either version 2 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program; if not, write to the Free Software
-# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA#
-#
+#  This file is distibuted under LGPL-3.0 
+#  See COPYING file attached.
 # #######################################################################################
 #
-#    ALPHA VERSION,
+#    BETA VERSION,
 #    Some function may be subject to refactoring
 #
 #    Todo:
@@ -38,7 +26,7 @@
 #
 #    Changed compared with pyffmpeg:
 #     * Clean up destructors
-#     * Changed PIL to Numpy
+#     * Added compatibility with NumPy and PIL
 #     * Added copyless mode for ordered streams/tracks ( when buffers are disabled)
 #     * Added audio support
 #     * MultiTrack support (possibility to pass paramer)
@@ -46,22 +34,22 @@
 """
 
 #########################################################################################
-#
-######################################################
+
+###################################################################################################
 # Based on Pyffmpeg 0.2 by
 # Copyright (C) 2006-2007 James Evans <jaevans@users.sf.net>
-#####################################################
-
-#
-#####################################################
+# Authorization to change from GPL2.0 to LGPL 3.0 provided by original author for this new version
+###################################################################################################
 #  Declaration and imports
-####################################################
+###################################################################################################
 
 import sys
-import threading
-import numpy
 import traceback
-from numpy import ndarray
+
+
+
+
+#import numpy
 #import Image
 
 ctypedef signed char int8_t
@@ -87,14 +75,15 @@ cdef extern from "Python.h":
     void* PyMem_Malloc( size_t n)
     void PyMem_Free( void *p)
 
-cimport numpy as np
 
-cdef extern from "numpy/arrayobject.h":
-    void *PyArray_DATA(np.ndarray arr)
+
+
+#cimport numpy as np
+#cdef extern from "numpy/arrayobject.h":
+#    void *PyArray_DATA(np.ndarray arr)
 
 cdef extern from "libavutil/mathematics.h":
     int64_t av_rescale(int64_t a, int64_t b, int64_t c)
-
 
 cdef extern from "libavformat/avio.h":
     struct ByteIOContext:
@@ -424,6 +413,15 @@ cdef extern from "libavcodec/avcodec.h":
     void avcodec_flush_buffers(AVCodecContext *avctx)
 
 
+
+
+
+
+# ##############################################################
+# Used for debugging
+# ##############################################################
+
+
 #class DLock:
 #    def __init__(self):
 #        self.l=threading.Lock()
@@ -605,6 +603,29 @@ cdef extern from "libswscale/swscale.h":
     void sws_freeContext(SwsContext *swsContext)
     int sws_scale(SwsContext *context, uint8_t* src[], int srcStride[], int srcSliceY,int srcSliceH, uint8_t* dst[], int dstStride[])
 
+
+
+cdef extern from "Python.h":
+    ctypedef unsigned long size_t
+    object PyBuffer_FromMemory( void *ptr, int size)
+    object PyBuffer_FromReadWriteMemory( void *ptr, int size)
+    object PyString_FromStringAndSize(char *s, int len)
+    void* PyMem_Malloc( size_t n)
+    void PyMem_Free( void *p)
+
+
+def rwbuffer_at(pos,len):
+    cdef unsigned long ptr=int(pos)
+    return PyBuffer_FromReadWriteMemory(<void *>ptr,len)
+
+
+try:
+    import numpy
+    from pyffmpeg_numpybindings import *
+except:
+    numpy=None
+
+
 def py_av_register_all():
     if __registered:
         return
@@ -615,6 +636,8 @@ cdef AVRational AV_TIME_BASE_Q
 AV_TIME_BASE_Q.num = 1
 AV_TIME_BASE_Q.den = AV_TIME_BASE
 
+OUTPUTMODE_NUMPY=0
+OUTPUTMODE_PIL=1
 
 
 AVCODEC_MAX_AUDIO_FRAME_SIZE=192000
@@ -647,352 +670,13 @@ cdef av_read_frame_flush        (       AVFormatContext *        s )  :
 ## AudioQueue Object  (This may later be exported with another object)
 #########################################################################################################
 
-class Queue_Empty(Exception):
-    pass
-
-class Queue_Full(Exception):
-    pass
-
 cdef DEBUG(s):
-  sys.stderr.write("DEBUG: %s\n"%(s,))
-  sys.stderr.flush()
+    sys.stderr.write("DEBUG: %s\n"%(s,))
+    sys.stderr.flush()
 
 ## contains pairs of timestamp, array
-cdef class AudioQueue:
-    cdef int limitsz
-    cdef object l
-    cdef unsigned long long _off # global time offset
-    cdef unsigned long long _totallen # len of buffer
-    cdef long long _newframepos # new frame starts at...
-    cdef int _destframesize
-    cdef int _destframeinterval
-    cdef int _destframeoverlap
-    cdef object _destframequeue
-    cdef float tps
-    cdef float samplerate
-    cdef float speedrate[2]
-    cdef object mutex
-    def  __init__(self,limitsz=-1,samplerate=44100,tps=1000,destframesize=0, destframeoverlap=0,destframequeue=None):
-        self.limitsz=limitsz
-        self.l=[]
-        self._off=0
-        self._totallen=0
-        self._newframepos=0
-        self._destframesize=destframesize
-        self._destframeoverlap=destframeoverlap
-        self._destframeinterval=destframesize-destframeoverlap
-        #print destframesize,destframeoverlap
-        assert((self._destframeinterval>0) or destframesize==0)
-        self._destframequeue=destframequeue
-        self.tps=tps
-        self.samplerate=samplerate
-        self.speedrate[0]=tps/samplerate
-        self.speedrate[1]=1./samplerate # how much seconds does elapse per sample
-        self.mutex=threading.Lock()
-    def get_len(self):
-        return self.limitsz
-    def get(self,wait=True):
-        if (self.mutex.acquire(wait)):
-            try:
-                r= self.l.pop(0)
-                self._totallen-=r[0].shape[0]
-                self._newframepos-=r[0].shape[0]
-                self._off+=r[0].shape[0]
-                if (self._newframepos<0):
-                    self._newframepos=0
-                if (self._totallen<0):
-                    self._totallen=0
-                assert(self._newframepos>=0)
-                assert(self._newframepos<=self._totallen)
-                self.mutex.release()
-                return r;
-            except:
-                self.mutex.release()
-                raise Queue_Empty
-        else:
-            raise Queue_Empty
-    def _timeat(self,x,t=0):
-        i=0
-        lli=self.l[i][0].shape[0]
-        while (x>lli):
-            x-=lli
-            i+=1
-            lli=self.l[i][0].shape[0]
-        #print "erroneous  speedrate to correct"
-        return self.l[i][1+t]+x*self.speedrate[t]
-    def _check_push_frame(self,writesz):
-                # we are already mutex protected here
-            #print "dfsz=", self._destframesize,  self._totallen,  self._newframepos
-        if (self._destframesize):
-            #newframes=((self._totallen-self._newframepos)//(self._destframeinterval))-((self._totallen-(writesz+self._newframepos))//(self._destframeinterval))
-            #newframes-=(self._destframeoverlap/self._destframeinterval)
-            #print "# NEWFRAMES, TL, NFP",newframes,  self._totallen, self._newframepos
-            while ((self._totallen-self._newframepos) > self._destframesize):
-                    # we can add frames
-                #print "#  TL, NFP,INT",  self._totallen, self._newframepos,self._destframeinterval
-                #print  ((self._totallen+writesz-self._newframepos) , self._destframesize)
-                #print self._destframequeue.get_len()
-                #raise Exception,"Will lockx"
-                #sys.stderr.write( "PUSHING...\n")
-                #sys.stderr.write(str(self))
-                #sys.stderr.write(str(self._destframequeue))
-#                sys.stderr.write(str(self.mutex))
-#                sys.stderr.write(str(self._destframequeue.mutex))
-                self._destframequeue.putforce((self.__getslice(self._newframepos,(self._newframepos+self._destframesize)),self._timeat(self._newframepos),self._timeat(self._newframepos,t=1) ))
-                #print "#  TL, NFP",  self._totallen, self._newframepos
-                self._newframepos+=self._destframeinterval
-                #print "#  TL, NFP",  self._totallen, self._newframepos
-                #sys.stderr.write(str((self._newframepos, self._totallen)))
-                assert(self._newframepos>=0)
-                assert(self._newframepos<=self._totallen)
-    def put(self,it,wait=True):
-        if (self.mutex.acquire(wait)):
-            if ((self.limitsz!=-1) and (len(self.l)>=self.limitsz)):
-                self.mutex.release()
-                raise Queue_Full
-            self.l.append(it)
-            self._totallen+=it[0].shape[0]
-            self._check_push_frame(it[0].shape[0])
-            self.mutex.release()
-        else:
-            raise Queue_Full
-    def putforce(self,it,wait=True):
-        #print self._newframepos, self.l, self.limitsz
-        if (self.mutex.acquire(wait)):
-            #print (self.limitsz==-1) or ((self.limitsz!=-1) and (len(self.l)<=self.limitsz))
-            if ((self.limitsz!=-1) and (len(self.l)>=self.limitsz)):
-                #sys.stderr.write("warning : audio queue overloaded\n")
-                x=self.l.pop(0)
-                #print "$",   self._totallen, self._newframepos
-                self._totallen-=x[0].shape[0]
-                self._newframepos-=x[0].shape[0]
-                self._off+=x[0].shape[0]
-                #print "$",   self._totallen, self._newframepos
-                if (self._newframepos<0):
-                    self._newframepos=0
-                if (self._totallen<0):
-                    self._totallen=0
-                assert(self._newframepos>=0)
-                assert(self._newframepos<=self._totallen)
-            self.l.append(it)
-            self._totallen+=it[0].shape[0]
-            self._check_push_frame(it[0].shape[0])
-            self.mutex.release()
-    def get_nowait(self):
-        return self.get(wait=False)
-    def put_nowait(self,it):
-        return self.put(it,wait=False)
-    def putforce_nowait(self,it):
-        return self.putforce(it,wait=False)
-    def __getitem__(self,x):
-        # 0  is the fist element in the non popped array so we start from last buf
-        assert(x>=0)
-        self.mutex.acquire()
-        if (x>=self._totallen):
-            self.mutex.release()
-            assert(x<self._totallen)
-            assert(False)
-        i=0#i=-1
-        try:
-            lli=self.l[i][0].shape[0]
-        except:
-            self.mutex.release()
-            raise IndexError
-        while (x>lli):
-            x-=lli
-            i+=1#i-=1
-            try:
-                lli=self.l[i][0].shape[0]
-            except:
-                self.mutex.release()
-                raise IndexError
-        r=self.l[i][0][x]
-        self.mutex.release()
-        return r
-    def __getslice__(self,x,y):
-        # 0  is the fist element in the non popped array so we start from last buf
-        assert(y>=x)
-        assert(x>=0)
-        self.mutex.acquire()
-        if (y>self._totallen):
-            self.mutex.release()
-            assert(y<=self._totallen)
-            assert(False)
-        if (y==x):
-            self.mutex.release()
-            return []
-        i=0#i=-1
-        try:
-            lli=self.l[i][0].shape[0]
-        except:
-            self.mutex.release()
-            raise IndexError
-        while (x>=lli):
-            x-=lli
-            y-=lli
-            #i-=1
-            i+=1
-            try:
-                lli=self.l[i][0].shape[0]
-            except:
-                self.mutex.release()
-                raise IndexError
-        j=i
-        llj=lli
-        while (y>llj):
-            y-=llj
-            #j-=1
-            j+=1
-            try:
-                llj=self.l[j][0].shape[0]
-            except:
-                self.mutex.release()
-                raise IndexError
-        if (i==j):
-            try:
-                r=self.l[i][0][x:y]
-            except:
-                self.mutex.release()
-                raise IndexError
-            self.mutex.release()
-            return r
-        else:
-            #range (i-1,j,-1)
-            try:
-                r=numpy.vstack( [ self.l[i][0][x:,:] ]  + [ self.l[k][0] for k in range (i+1,j) ]  +   [ self.l[j][0][:y,:] ])
-            except:
-                self.mutex.release()
-                raise IndexError
-            self.mutex.release()
-            return r
-    def __getitem(self,x):
-        # 0  is the fist element in the non popped array so we start from last buf
-        i=0#i=-1
-        lli=self.l[i][0].shape[0]
-        while (x>lli):
-            x-=lli
-            i+=1#i-=1
-            lli=self.l[i][0].shape[0]
-        r=self.l[i][x]
-        return r
-    def __getslice(self,x,y):
-        # 0  is the fist element in the non popped array so we start from last buf
-        if (y==x):
-            return []
-        i=0#i=-1
-        lli=self.l[i][0].shape[0]
-        while (x>=lli):
-            x-=lli
-            y-=lli
-            #i-=1
-            i+=1
-            lli=self.l[i][0].shape[0]
-        j=i
-        llj=lli
-        while (y>llj):
-            y-=llj
-            #j-=1
-            j+=1
-            if (j==len(self.l)):
-                j=j-1
-                y=self.l[j][0].shape[0]
-            llj=self.l[j][0].shape[0]
-        if (i==j):
-            r=self.l[i][0][x:y]
-            return r
-        else:
-            #range (i-1,j,-1)
-            r=numpy.vstack( [ self.l[i][0][x:,:] ]  + [ self.l[k][0] for k in range (i+1,j) ]  +   [ self.l[j][0][:y,:] ])
-            return r
-    def get_time_bounds(self,wait=True):
-        if (self.mutex.acquire(wait)):
-            ttimefrom=self.l[0][2] ## mintime
-            ttimeto=self.l[-1][2]+(self.l[-1][0].shape[0]*self.speedrate[1]) ## maxtime
-            self.mutex.release()
-        return ttimefrom,ttimeto
-    def get_time_slice(self,timefrom,timeto,wait=True):
-        ## we assume this timeslice is in our queue
-        """ get the slice of audio buffers contained in-between the two specified instants,
-             these instants must be specified in seconds since the audio started
-             (this function suffers from a little bit from approximations (apparently))
-         """
-        assert(timefrom<=timeto)
-        if (self.mutex.acquire(wait)):
-            ttimefrom=self.l[0][2] ## mintime
-            ttimeto=self.l[-1][2]+(self.l[-1][0].shape[0]*self.speedrate[1]) ## maxtime
-            if (ttimeto<ttimefrom):
-                print("warning ttimeto < ttimefrom : insonsistent audio queue think to reset audio queues when seeking")
-            if (timefrom<ttimefrom):
-                print("warning time from slice is before audioqueue memory capacity : fixing !")
-                timefrom=ttimefrom
-            if (timeto<ttimefrom):
-                print("warning timeto slice is before audioqueue memory capacity : fixing !")
-                timeto=ttimefrom
-            if (timeto>ttimeto):
-                print("warning timeto slice is after audioqueue memory capacity : fixing !")
-                timeto=ttimeto
-            if (timefrom>ttimeto):
-                print("warning timefrom slice is after audioqueue memory capacity : fixing !")
-                timefrom=ttimeto
 
-            deltafrom=int((timefrom-ttimefrom)*self.samplerate)
-            deltato=int((timeto-ttimefrom)*self.samplerate)
-            try:
-                sl=self.__getslice(deltafrom,deltato)
-            except:
-                self.mutex.release()
-                raise Exception,("error retrieving slice %d:%d"%(deltafrom,deltato))
-#             print (self._off+deltafrom,self._off+deltato)
-            self.mutex.release()
-            return sl
-    def get_sampletime_bounds(self,wait=True):
-        if (self.mutex.acquire(wait)):
-            ttimefrom=self._off ## mintime
-            ttimeto=self._off+self._totallen ## maxtime
-            self.mutex.release()
-        return ttimefrom,ttimeto
-
-    def get_sampletime_slice(self,timefrom,timeto,wait=True):
-        ## we assume this timeslice is in our queue
-        """ get the slice of audio buffers contained in-between the two specified instants,
-             these instants must be specified in seconds since the audio started """
-        assert(timefrom<=timeto)
-        if (self.mutex.acquire(wait)):
-            ttimefrom=self._off ## mintime
-            ttimeto=self._off+self._totallen ## maxtime
-            if (ttimeto<ttimefrom):
-                print("warning ttimeto < ttimefrom : insonsistent audio queue think to reset audio queues when seeking")
-            if (timefrom<ttimefrom):
-                print("warning time from slice is before audioqueue memory capacity : fixing !")
-                timefrom=ttimefrom
-            if (timeto<ttimefrom):
-                print("warning timeto slice is before audioqueue memory capacity : fixing !")
-                timeto=ttimefrom
-            if (timeto>ttimeto):
-                print("warning timeto slice is after audioqueue memory capacity : fixing !")
-                timeto=ttimeto
-            if (timefrom>ttimeto):
-                print("warning timefrom slice is after audioqueue memory capacity : fixing !")
-                timefrom=ttimeto
-            deltafrom=(timefrom-ttimefrom)
-            deltato=(timeto-ttimefrom)
-            try:
-                sl=self.__getslice(deltafrom,deltato)
-            except:
-                self.mutex.release()
-                raise Exception,("error retrieving slice %d:%d"%(deltafrom,deltato))
- #            print (self._off+deltafrom,self._off+deltato)
-            self.mutex.release()
-            return sl
-    def print_buffer_stats(self,prefix=""):
-        sys.stderr.write(  prefix+" limitsz"+ str(self.limitsz)+"\n")
-        sys.stderr.write(  prefix+" offset (mintime)"+str( self._off)+"\n")
-        sys.stderr.write(  prefix+" offset (maxtime)"+str( self._off+ self._totallen)+"\n")
-        sys.stderr.write(  prefix+" length"+str( self._totallen)+"\n")
-        sys.stderr.write(  prefix+" time bounds : "+str( self.get_time_bounds())+"\n")
-        sys.stderr.write(  prefix+" sampletime bounds : "+str( self.get_sampletime_bounds())+"\n")
-
-
+from audioqueue import AudioQueue
 
 
 ##################################################################
@@ -1069,6 +753,11 @@ cdef class AFFMpegReader:
         pass
 
 cdef class Track:
+    """
+     A track is used for memorizing all the aspect related to
+     Video, or an Audio Track.
+     Practically a Track is managing the decoder context for itself.
+    """
     cdef AFFMpegReader vr
     cdef int no
     ## cdef AVFormatContext *FormatCtx
@@ -1092,15 +781,19 @@ cdef class Track:
         self.support_truncated=1
 
     def get_no(self):
+        """Returns the number of the tracks."""
         return self.no
 
     def __len__(self):
+        """Returns the number of data frames on this track."""
         return self.stream.nb_frames
 
     def duration(self):
+        """Return the duration of one track in PTS"""
         return self.stream.duration
 
     def duration_time(self):
+        """ returns the duration of one track in seconds."""
         return float(self.duration())/ (<float>AV_TIME_BASE)
 
     cdef init0(Track self,  AFFMpegReader vr,int no, AVCodecContext *CodecCtx):
@@ -1147,6 +840,10 @@ cdef class Track:
             self.do_check_start=1
 
     def check_start(self):
+        """ It seems that many file have incorrect initial time information.
+            The best way to avoid offset in shifting is thus to check what
+            is the time of the beginning of the track.
+        """
         if (self.do_check_start):
             try:
                 self.seek_to_pts(0)
@@ -1162,9 +859,17 @@ cdef class Track:
             pass
 
     def set_observer(self, observer=None):
+        """ An observer is a callback function that is called when a new
+            frame of data arrives.
+        """
         self.observer=observer
 
     def _reopencodec(self):
+        """
+          This is used to reset the codec context.
+          Very often, this is the safest way to get everything clean
+          when seeking.
+        """
         if (self.CodecCtx!=NULL):
             avcodec_close(self.CodecCtx)
         self.CodecCtx=NULL
@@ -1182,27 +887,37 @@ cdef class Track:
         self.CodecCtx=NULL
 
     def prepare_to_be_just_in_time(self):
+        """
+        In order to avoid delay during reading, our player try always
+        to read a little bit of that is available ahead.
+        """
         pass
 
     def reset_buffers(self):
-        ## violent solution but the most efficient so far...
+        """
+        This function is used on seek to reset everything.
+        """
         self.pts=0
         self.last_pts=0
         self.last_dts=0
-        avcodec_flush_buffers(self.CodecCtx)
+        if (self.CodecCtx!=NULL):
+           avcodec_flush_buffers(self.CodecCtx)
+        ## violent solution but the most efficient so far...
         self._reopencodec()
 
-  #  cdef process_packet(self, AVPacket * pkt):
-  #      print "FATAL : process_packet : Error This function is abstract and should never be called, it is likely that you compiled pyffmpeg with a too old version of pyffmpeg !!!"
-  #      print "Try running 'easy_install -U cython' and rerun the pyffmpeg2 install" 
-  #      assert(False)
+    #  cdef process_packet(self, AVPacket * pkt):
+    #      print "FATAL : process_packet : Error This function is abstract and should never be called, it is likely that you compiled pyffmpeg with a too old version of pyffmpeg !!!"
+    #      print "Try running 'easy_install -U cython' and rerun the pyffmpeg2 install"
+    #      assert(False)
 
     def seek_to_seconds(self, seconds ):
+        """ Seek to the specified time in seconds"""
         pts = (<float>seconds) * (<float>AV_TIME_BASE)
         #pts=av_rescale(seconds*AV_TIME_BASE, self.stream.time_base.den, self.stream.time_base.num*AV_TIME_BASE)
         self.seek_to_pts(pts)
 
     def seek_to_pts(self,  unsigned long long int pts):
+        """ Seek to the specified PTS"""
         #print "seeked pts :", pts
         #sys.stderr.write( "seeking to PTS %d (start_time=%d (%x)) ?\n"%(pts,self.start_time, self.start_time))
 
@@ -1236,7 +951,7 @@ cdef class AudioPacketDecoder:
         if (first):
             self.audio_pkt_data = <uint8_t *>pkt.data;
             self.audio_pkt_size = pkt.size;
-        
+
         while(self.audio_pkt_size > 0) :
             data_size = buf_size
             len1 = avcodec_decode_audio2(aCodecCtx, <int16_t *>audio_buf, &data_size, <uint8_t *>self.audio_pkt_data, self.audio_pkt_size);
@@ -1255,21 +970,21 @@ cdef class AudioPacketDecoder:
             n = 2 * nchannels
             audio_clock[0] += ((<double>data_size) / (<double>(n * samplerate)))
             return data_size;
-        
+
         if(pkt.data):
             av_free_packet(pkt)
         return -1
 
 cdef class AudioTrack(Track):
-    cdef object audioq
-    cdef object audiohq
-    cdef double clock
+    cdef object audioq   #< This queue memorize the data to be reagglomerated
+    cdef object audiohq  #< This queue contains the audio packet for hardware devices
+    cdef double clock    #< Just a clock
     cdef AudioPacketDecoder apd
     cdef float tps
     cdef int data_size
     cdef int rdata_size
     cdef int sdata_size
-    cdef int dest_frame_overlap
+    cdef int dest_frame_overlap #< If you want to computer spectrograms it may be useful to have overlap in-between data
     cdef int dest_frame_size
     cdef int hardware_queue_len
     cdef object lf
@@ -1277,6 +992,7 @@ cdef class AudioTrack(Track):
     cdef object audio_buf # buffer used in decoding of  audio
 
     def init(self, tps=30, hardware_queue_len=5, dest_frame_size=0, dest_frame_overlap=0, **args):
+        assert (numpy!=None), "NumPy must be available for audio support to work. Please install numpy."
         Track.init(self,  **args)
         self.tps=tps
         self.hardware_queue_len=hardware_queue_len
@@ -1302,7 +1018,7 @@ cdef class AudioTrack(Track):
         self.audiohq=AudioQueue(limitsz=self.hardware_queue_len)  # hardware queue : agglomerated and time marked packets of a specific size (based on audioq)
         self.audioq=AudioQueue(limitsz=12,tps=self.tps,
                               samplerate=self.CodecCtx.sample_rate,
-                              destframesize=self.dest_frame_size if (self.dest_frame_size!=0) else (self.CodecCtx.sample_rate//self.tps),                 
+                              destframesize=self.dest_frame_size if (self.dest_frame_size!=0) else (self.CodecCtx.sample_rate//self.tps),
 #                              destframesize=self.dest_frame_size or (self.CodecCtx.sample_rate//self.tps),
                               destframeoverlap=self.dest_frame_overlap,
                               destframequeue=self.audiohq)
@@ -1344,7 +1060,7 @@ cdef class AudioTrack(Track):
             calltrack=-1
         self.vr.read_until_next_frame(calltrack=calltrack)
         self.audioq.print_buffer_stats()
-    
+
     cdef process_packet(self, AVPacket * pkt):
         cdef double xpts
         self.rdata_size=self.data_size
@@ -1353,7 +1069,7 @@ cdef class AudioTrack(Track):
         first=1
         while (audio_size>=0):
             audio_size = self.apd.audio_decode_frame(self.CodecCtx,
-                                      <uint8_t *>  PyArray_DATA( self.audio_buf),
+                                      <uint8_t *> <unsigned long long> (PyArray_DATA_content( self.audio_buf)),
                                       audio_size,
                                       &xpts,
                                       &self.clock,
@@ -1414,11 +1130,13 @@ cdef class VideoTrack(Track):
         The frames are put in a temporary pool with their presentation time.
         When the next image is queried the system look at for the image the most likely to be the next one...
     """
+    cdef int outputmode
     cdef int pixel_format
     cdef int frameno
     cdef int videoframebanksz
     cdef object videoframebank ### we use this to reorder image though time
     cdef object videoframebuffers ### TODO : Make use of these buffers
+    cdef int videobuffers
     cdef int hurried_frames
     cdef int width
     cdef int height
@@ -1426,13 +1144,15 @@ cdef class VideoTrack(Track):
     cdef int dest_width
     cdef  SwsContext * convert_ctx
 
-    def init(self, pixel_format=-1, videoframebanksz=8, dest_width=-1, dest_height=-1,** args):
+    def init(self, pixel_format=-1, videoframebanksz=4, dest_width=-1, dest_height=-1,videobuffers=8,outputmode=OUTPUTMODE_NUMPY,** args):
         """ construct a video track decoder for a specified image format """
         cdef int numBytes
         Track.init(self,  **args)
+        self.outputmode=outputmode
         self.pixel_format=pixel_format
         self.videoframebank=[]
         self.videoframebanksz=videoframebanksz
+        self.videobuffers=videobuffers
         self.width = self.CodecCtx.width
         self.height = self.CodecCtx.height
         #self.CodecCtx.skip_frame=skip_frame
@@ -1440,7 +1160,10 @@ cdef class VideoTrack(Track):
         self.dest_width=(dest_width==-1) and self.width or dest_width
         self.dest_height=(dest_height==-1) and self.height or dest_height
         numBytes=avpicture_get_size(self.pixel_format, self.dest_width, self.dest_height)
-        self.videoframebuffers=[ numpy.zeros(shape=(self.dest_height, self.dest_width,numBytes/(self.dest_width*self.dest_height)),  dtype=numpy.uint8)      for i in range(255) ]
+        if (outputmode==OUTPUTMODE_NUMPY):
+            self.videoframebuffers=[ numpy.zeros(shape=(self.dest_height, self.dest_width,numBytes/(self.dest_width*self.dest_height)),  dtype=numpy.uint8)      for i in range(self.videobuffers) ]
+        else:
+            self.videoframebuffers=[ None      for i in range(self.videobuffers) ]
         if (self.pixel_format==-1):
             self.pixel_format=PIX_FMT_RGB24
         self.convert_ctx = sws_getContext(self.width, self.height, self.CodecCtx.pix_fmt, self.dest_width,self.dest_height,self.pixel_format, SWS_BILINEAR, NULL, NULL, NULL)
@@ -1453,15 +1176,15 @@ cdef class VideoTrack(Track):
         Track.reset_buffers(self)
         self.videoframebuffers.extend(self.videoframebank)
         self.videoframebank=[]
-    
+
     def print_buffer_stats(self):
         """ display some informations on internal buffer system """
         print "video buffers :", len(self.videoframebank), " used out of ", self.videoframebanksz
-    
+
     def get_cur_pts(self):
         return self.last_pts
-    
-    
+
+
     def get_orig_size(self) :
         """ return the size of the image in the current video track """
         return (self.width,  self.height)
@@ -1523,7 +1246,10 @@ cdef class VideoTrack(Track):
         pFrameRes = self._convert_to(<AVPicture *>self.frame)
         numBytes=avpicture_get_size(self.pixel_format, self.dest_width, self.dest_height)
         buf_obj = PyBuffer_FromMemory(pFrameRes.data[0],numBytes)
-        img_image=numpy.ndarray(shape=(self.dest_height,self.dest_width,numBytes/(self.dest_width*self.dest_height)),dtype=numpy.uint8,buffer=buf_obj).copy()
+        if self.outputmode==OUTPUTMODE_NUMPY:
+           img_image=numpy.ndarray(shape=(self.dest_height,self.dest_width,numBytes/(self.dest_width*self.dest_height)),dtype=numpy.uint8,buffer=buf_obj).copy()
+        else:
+           img_image=buf_obj.copy()
         PyMem_Free(pFrameRes.data[0]) ## free of the fata of the frame ???
         av_free(pFrameRes)
         return img_image
@@ -1537,7 +1263,10 @@ cdef class VideoTrack(Track):
         cdef object buf_obj
         cdef int numBytes
         numBytes=avpicture_get_size(self.pixel_format, self.CodecCtx.width, self.CodecCtx.height)
-        pFrameRes = self._convert_withbuf(<AVPicture *>self.frame,<char *>PyArray_DATA(numpyarr))
+        if (self.numpy):
+            pFrameRes = self._convert_withbuf(<AVPicture *>self.frame,<char *><unsigned long long>PyArray_DATA_content(numpyarr))
+        else:
+            raise Exception, "Not yet implemented" # TODO : <
 
 
     ########################################
@@ -1848,14 +1577,14 @@ cdef class FFMpegReader(AFFMpegReader):
                     self.default_video_track=vt
                 vt.init0(self,trackno,  CodecCtx) ## here we are passing cpointers so we do a C call
                 vt.init(**s[2])## here we do a python call
-                self.tracks.append(vt) 
+                self.tracks.append(vt)
             elif (s[0]==CODEC_TYPE_AUDIO):
                 at=AudioTrack()
                 if (self.default_audio_track==None):
                     self.default_audio_track=at
                 at.init0(self,trackno,  CodecCtx) ## here we are passing cpointers so we do a C call
                 at.init(**s[2])## here we do a python call
-                self.tracks.append(at) 
+                self.tracks.append(at)
             else:
                 raise "unknown type of Track"
         if (self.default_audio_track!=None and self.default_video_track!=None):
@@ -1923,11 +1652,11 @@ cdef class FFMpegReader(AFFMpegReader):
                 ##
                 ##
                 if ct.CodecCtx.codec_type==CODEC_TYPE_VIDEO:
-                  vt=ct
-                  vt.process_packet(self.packet)
+                    vt=ct
+                    vt.process_packet(self.packet)
                 elif ct.CodecCtx.codec_type==CODEC_TYPE_AUDIO:
-                  at=ct
-                  at.process_packet(self.packet)
+                    at=ct
+                    at.process_packet(self.packet)
                 else:
                     raise Exception, "Unknown codec type"
                     #ct.process_packet(self.packet)
@@ -2034,8 +1763,8 @@ cdef class FFMpegReader(AFFMpegReader):
         ## band buffers
         ## ######################################
         if self.with_jit:
-          #DEBUG("preparing JIT  ")
-          self.prepare_to_be_just_in_time()
+            #DEBUG("preparing JIT  ")
+            self.prepare_to_be_just_in_time()
         #DEBUG("/seek")
 
     def _finalize_seek_to(self, pts):

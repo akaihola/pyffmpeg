@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import numpy,random,re,sys,os
-from pyffmpegb import *
+from pyffmpeg import *
 
 from PyQt4 import QtCore
 from PyQt4 import QtGui
@@ -66,7 +66,7 @@ img=numpy.zeros(display_sz+(3,),dtype=numpy.uint8)
 subdisplay=numpy.zeros(subdisplay_nb,dtype=object)
 
 # look for videofiles
-files=filter(lambda x:re.match("(.*).(mpg|avi|wmv|flv)",x),os.listdir(directory))
+files=filter(lambda x:re.match("(.*).(mpg|avi|flv)",x),os.listdir(directory))
 
 # specify to open only video at the correct size
 TS={ 'video1':(0, -1, {'pixel_format':PixelFormats.RGB24,'videoframebanksz':1, 'dest_width':shp[1], 'dest_height':shp[0] })}

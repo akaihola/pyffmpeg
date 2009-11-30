@@ -6,7 +6,7 @@
 ## import your modules
 
 import sys, numpy, time, StringIO, Image, threading
-from pyffmpegb import *
+from pyffmpeg import *
 
 try:
   import ossaudiodev as oss

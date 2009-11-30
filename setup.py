@@ -38,15 +38,7 @@ def static_resolver(libs):
     map(lambda x: x not in result and result.append(x), deps)
     return result
 
-#./configure --enable-shared --enable-swscale --enable-gpl --enable-memalign-hack #--enable-nonfree
-#print dir(nd)
-#url="http://ffmpeg.arrozcru.org/builds/bin/ffmpeg-latest-gpl-shared-dev.tar.bz2"
-#url7zip="http://downloads.sourceforge.net/sevenzip/7za465.zip"
-#urlffmpeg="http://ffmpeg.arrozcru.org/autobuilds/ffmpeg/mingw32/shared/fmpeg-latest-gpl-shared-dev.7z"
-#"""
-#wget -nd  url7zip
-#unzip 7za.zip
-#"""
+
 
 libs = ('avformat', 'avcodec', 'swscale')
 incdir = [ path_join(ffmpegpath, 'include') ] + nd.get_numpy_include_dirs()
@@ -56,13 +48,32 @@ if platform == 'win32':
     libs = static_resolver(libs + ('avutil',))
     libinc += [ r'/mingw/lib' ] # why my mingw is unable to find libz2?
 
+with_numpy=True
+
+if with_numpy:
+        ext_modules=[ Extension('pyffmpeg', [ 'pyffmpeg.pyx' ],
+                       include_dirs = incdir,
+                       library_dirs = libinc,
+                       libraries = libs),
+                      Extension('audioqueue', [ 'audioqueue.pyx' ],
+                       include_dirs = incdir,
+                       library_dirs = libinc,
+                       libraries = libs),
+                      Extension('pyffmpeg_numpybindings', [ 'pyffmpeg_numpybindings.pyx' ],
+                       include_dirs = incdir,
+                       library_dirs = libinc,
+                       libraries = libs)
+                     ]
+else:
+        ext_modules=[ Extension('pyffmpeg', [ 'pyffmpeg.pyx' ],
+                       include_dirs = incdir,
+                       library_dirs = libinc,
+                       libraries = libs)
+                    ]
+
+
 setup(
     name = 'pyffmpegb',
     cmdclass = {'build_ext': build_ext},
-    ext_modules = [
-                   Extension('pyffmpegb', [ 'pyffmpegb.pyx' ],
-                    include_dirs = incdir,
-                    library_dirs = libinc,
-                    libraries = libs)
-                ]
+    ext_modules = ext_modules
 )
