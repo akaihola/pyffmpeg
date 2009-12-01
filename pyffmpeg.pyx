@@ -676,7 +676,7 @@ cdef DEBUG(s):
 
 ## contains pairs of timestamp, array
 
-from audioqueue import AudioQueue
+from audioqueue import AudioQueue, Queue_Empty, Queue_Full
 
 
 ##################################################################
