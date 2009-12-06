@@ -4,7 +4,13 @@ from distutils.extension import Extension
 from Cython.Distutils import build_ext
 from os.path import join as path_join
 from sys import platform
-import numpy.distutils.misc_util as nd
+try:
+  import numpy.distutils.misc_util as nd
+  with_numpy=True
+except:
+  with_numpy=False
+  sys.stderr.write("Numpy does not seems to be installed on your system.\n")
+  sys.stderr.write("You may still use pyffmpeg but audiosupport and numpy-bride are disabled.\n")  
 
 if platform == 'win32':
     ffmpegpath = r'c:\ffmpeg-static'

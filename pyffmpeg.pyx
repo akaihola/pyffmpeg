@@ -1,19 +1,22 @@
 
 """
 # #######################################################################################
-# Pyffmpeg 
+# Pyffmpeg
 #
 # Copyright (C) 2008-2009 Bertrand Nouvel <nouvel@nii.ac.jp>
 #   Japanese French Laboratory for Informatics
 #   CNRS
 #
 # #######################################################################################
-#  This file is distibuted under LGPL-3.0 
+#  This file is distibuted under LGPL-3.0
 #  See COPYING file attached.
 # #######################################################################################
 #
 #    BETA VERSION,
 #    Some function may be subject to refactoring
+#
+#    Todo :
+#       * why seek_before mandatory
 #
 #    Todo:
 #     * Online Streaming
@@ -774,11 +777,13 @@ cdef class Track:
     cdef object observer
     cdef int support_truncated
     cdef int do_check_start
+    cdef int reopen_codec_on_buffer_reset
 
     cdef __new__(Track self):
         self.vr=None
         self.observer=None
         self.support_truncated=1
+        self.reopen_codec_on_buffer_reset=1
 
     def get_no(self):
         """Returns the number of the tracks."""
@@ -901,9 +906,10 @@ cdef class Track:
         self.last_pts=0
         self.last_dts=0
         if (self.CodecCtx!=NULL):
-           avcodec_flush_buffers(self.CodecCtx)
+            avcodec_flush_buffers(self.CodecCtx)
         ## violent solution but the most efficient so far...
-        self._reopencodec()
+        if (self.reopen_codec_on_buffer_reset):
+            self._reopencodec()
 
     #  cdef process_packet(self, AVPacket * pkt):
     #      print "FATAL : process_packet : Error This function is abstract and should never be called, it is likely that you compiled pyffmpeg with a too old version of pyffmpeg !!!"
@@ -971,8 +977,8 @@ cdef class AudioPacketDecoder:
             audio_clock[0] += ((<double>data_size) / (<double>(n * samplerate)))
             return data_size;
 
-        if(pkt.data):
-            av_free_packet(pkt)
+        #if(pkt.data):
+        #    av_free_packet(pkt)
         return -1
 
 cdef class AudioTrack(Track):
@@ -1059,7 +1065,7 @@ cdef class AudioTrack(Track):
         if (self.vr.tracks[0].get_no()==self.get_no()):
             calltrack=-1
         self.vr.read_until_next_frame(calltrack=calltrack)
-        self.audioq.print_buffer_stats()
+        #self.audioq.print_buffer_stats()
 
     cdef process_packet(self, AVPacket * pkt):
         cdef double xpts
@@ -1150,6 +1156,8 @@ cdef class VideoTrack(Track):
         Track.init(self,  **args)
         self.outputmode=outputmode
         self.pixel_format=pixel_format
+        if (self.pixel_format==-1):
+            self.pixel_format=PIX_FMT_RGB24	
         self.videoframebank=[]
         self.videoframebanksz=videoframebanksz
         self.videobuffers=videobuffers
@@ -1161,18 +1169,16 @@ cdef class VideoTrack(Track):
         self.dest_height=(dest_height==-1) and self.height or dest_height
         numBytes=avpicture_get_size(self.pixel_format, self.dest_width, self.dest_height)
         if (outputmode==OUTPUTMODE_NUMPY):
+            #print "shape", (self.dest_height, self.dest_width,numBytes/(self.dest_width*self.dest_height))
             self.videoframebuffers=[ numpy.zeros(shape=(self.dest_height, self.dest_width,numBytes/(self.dest_width*self.dest_height)),  dtype=numpy.uint8)      for i in range(self.videobuffers) ]
         else:
             self.videoframebuffers=[ None      for i in range(self.videobuffers) ]
-        if (self.pixel_format==-1):
-            self.pixel_format=PIX_FMT_RGB24
         self.convert_ctx = sws_getContext(self.width, self.height, self.CodecCtx.pix_fmt, self.dest_width,self.dest_height,self.pixel_format, SWS_BILINEAR, NULL, NULL, NULL)
         if self.convert_ctx == NULL:
             raise MemoryError("Unable to allocate scaler context")
 
     def reset_buffers(self):
         """ reset internal buffers """
-        ## violent solution but the most efficient so far...
         Track.reset_buffers(self)
         self.videoframebuffers.extend(self.videoframebank)
         self.videoframebank=[]
@@ -1243,14 +1249,21 @@ cdef class VideoTrack(Track):
         cdef AVFrame *pFrameRes
         cdef object buf_obj
         cdef int numBytes
-        pFrameRes = self._convert_to(<AVPicture *>self.frame)
-        numBytes=avpicture_get_size(self.pixel_format, self.dest_width, self.dest_height)
-        buf_obj = PyBuffer_FromMemory(pFrameRes.data[0],numBytes)
         if self.outputmode==OUTPUTMODE_NUMPY:
-           img_image=numpy.ndarray(shape=(self.dest_height,self.dest_width,numBytes/(self.dest_width*self.dest_height)),dtype=numpy.uint8,buffer=buf_obj).copy()
+            #pFrameRes = self._convert_to(<AVPicture *>self.frame)
+            #numBytes=avpicture_get_size(self.pixel_format, self.dest_width, self.dest_height)
+            #buf_obj = PyBuffer_FromMemory(pFrameRes.data[0],numBytes)
+            #img_image=numpy.ndarray(shape=(self.dest_height,self.dest_width,numBytes/(self.dest_width*self.dest_height)),dtype=numpy.uint8,buffer=buf_obj).copy()
+            img_image=self.videoframebuffers.pop()
+            pFrameRes = self._convert_withbuf(<AVPicture *>self.frame,<char *><unsigned long long>PyArray_DATA_content(img_image))
+            #PyMem_Free(pFrameRes.data[0]) ## free the data of the frame ???
         else:
-           img_image=buf_obj.copy()
-        PyMem_Free(pFrameRes.data[0]) ## free of the fata of the frame ???
+            pFrameRes = self._convert_to(<AVPicture *>self.frame)
+            numBytes=avpicture_get_size(self.pixel_format, self.dest_width, self.dest_height)
+            buf_obj = PyBuffer_FromMemory(pFrameRes.data[0],numBytes)
+            #img_image=numpy.ndarray(shape=(self.dest_height,self.dest_width,numBytes/(self.dest_width*self.dest_height)),dtype=numpy.uint8,buffer=buf_obj).copy()
+            img_image=buf_obj.copy()
+            PyMem_Free(pFrameRes.data[0]) ## free of the fata of the frame ???
         av_free(pFrameRes)
         return img_image
 
@@ -1432,7 +1445,7 @@ cdef class VideoTrack(Track):
         frametype=self.frame.pict_type
         self.videoframebank.append((self.pts,self.frameno,self._internal_get_current_frame(),frametype))
         if (len(self.videoframebank)>self.videoframebanksz):
-            self.videoframebank.pop(0)
+            self.videoframebuffers.append(self.videoframebank.pop(0)[2])
         #DEBUG("/on_frame_finished")
 
 
@@ -1453,7 +1466,8 @@ cdef class FFMpegReader(AFFMpegReader):
     cdef object default_audio_track
     cdef object default_video_track
     cdef int with_jit
-    def __new__(self,with_jit=True):
+    cdef unsigned long long int seek_before_security_interval
+    def __new__(self,with_jit=False,seek_before=4000):
         self.filename = None
         self.tracks=[]
         self.ctracks=NULL
@@ -1470,6 +1484,7 @@ cdef class FFMpegReader(AFFMpegReader):
         self.default_audio_track=None
         self.default_video_track=None
         self.with_jit=with_jit
+        self.seek_before_security_interval=seek_before
 
     def __del__(self):
         self.close()
@@ -1596,6 +1611,12 @@ cdef class FFMpegReader(AFFMpegReader):
         if (self.FormatCtx!=NULL):
             for s in self.tracks:
                 s.close()
+            if (self.packet):
+                av_free_packet(self.packet)
+                self.packet=NULL
+            if (self.prepacket):
+                av_free_packet(self.prepacket)
+                self.packet=NULL
             self.tracks=[] # break cross references
             av_close_input_file(self.FormatCtx)
             self.FormatCtx=NULL
@@ -1661,8 +1682,12 @@ cdef class FFMpegReader(AFFMpegReader):
                     raise Exception, "Unknown codec type"
                     #ct.process_packet(self.packet)
                 #DEBUG("/process_current_packet (ok)")
+                av_free_packet(self.packet)
+                self.packet=NULL
                 return True
         #DEBUG("/process_current_packet (not processed !!)")
+        av_free_packet(self.packet)
+        self.packet=NULL
         return False
 
     def __prefetch_packet(self):
@@ -1703,6 +1728,8 @@ cdef class FFMpegReader(AFFMpegReader):
                     try:
                         self.__prefetch_packet()
                         cont=False
+                    except KeyboardInterrupt:
+                        raise
                     except:
                         maxerrs-=1
                         if (maxerrs<=0):
@@ -1727,11 +1754,11 @@ cdef class FFMpegReader(AFFMpegReader):
         """
           Globally seek the stream to a specified position
         """
-        sys.stderr.write("Seeking to PTS=%d\n"%pts)
+        #sys.stderr.write("Seeking to PTS=%d\n"%pts)
         cdef int ret=0
-        av_read_frame_flush(self.FormatCtx)
+        #av_read_frame_flush(self.FormatCtx)
         #DEBUG("FLUSHED")
-        ppts=pts-AV_TIME_BASE # seek a little bit before... and then manually go direct frame
+        ppts=pts-self.seek_before_security_interval # seek a little bit before... and then manually go direct frame
         #ppts=pts
         #print ppts, pts
         #DEBUG("CALLING AV_SEEK_FRAME")
@@ -1747,17 +1774,18 @@ cdef class FFMpegReader(AFFMpegReader):
         ## ######################################
 
         #DEBUG("resetting track buffers")
-        for  s in self.tracks:
-            s.reset_buffers()
+        #for  s in self.tracks:
+        #    s.reset_buffers()
 
         ## ######################################
         ## do set up exactly all tracks
         ## ######################################
 
-        #DEBUG("finalize seek    ")
-        self.disable_observers()
-        self._finalize_seek_to(pts)
-        self.enable_observers()
+        if (self.seek_before_security_interval):
+            #DEBUG("finalize seek    ")
+            self.disable_observers()
+            self._finalize_seek_to(pts)
+            self.enable_observers()
 
         ## ######################################
         ## band buffers
@@ -1787,6 +1815,10 @@ cdef class FFMpegReader(AFFMpegReader):
         ## Flush buffer
         ## ######################################
 
+
+        if (self.packet):
+            av_free_packet(self.packet)
+            self.packet=NULL
         self.altpacket=0
         self.prepacket=<AVPacket *>None
         self.packet=&self.packetbufa
@@ -1826,6 +1858,8 @@ cdef class FFMpegReader(AFFMpegReader):
             print "track ",c
             try:
                 t.print_buffer_stats
+            except KeyboardInterrupt:
+                raise
             except:
                 pass
             c=c+1
