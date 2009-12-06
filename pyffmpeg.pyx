@@ -1157,7 +1157,7 @@ cdef class VideoTrack(Track):
         self.outputmode=outputmode
         self.pixel_format=pixel_format
         if (self.pixel_format==-1):
-            self.pixel_format=PIX_FMT_RGB24	
+            self.pixel_format=PIX_FMT_RGB24
         self.videoframebank=[]
         self.videoframebanksz=videoframebanksz
         self.videobuffers=videobuffers
@@ -1180,7 +1180,8 @@ cdef class VideoTrack(Track):
     def reset_buffers(self):
         """ reset internal buffers """
         Track.reset_buffers(self)
-        self.videoframebuffers.extend(self.videoframebank)
+        for x in self.videoframebank:
+            self.videoframebuffers.append(x[2])
         self.videoframebank=[]
 
     def print_buffer_stats(self):
@@ -1294,7 +1295,8 @@ cdef class VideoTrack(Track):
     def refill_videobank(self,no=0):
         """ empty (partially) the videobank and refill it """
         if not no:
-            self.videoframebuffers.extend(self.videoframebank)
+            for x in self.videoframebank:
+                self.videoframebuffers.extend(x[2])
             self.videoframebank=[]
             self.prefill_videobank()
         else:
@@ -1774,8 +1776,8 @@ cdef class FFMpegReader(AFFMpegReader):
         ## ######################################
 
         #DEBUG("resetting track buffers")
-        #for  s in self.tracks:
-        #    s.reset_buffers()
+        for  s in self.tracks:
+            s.reset_buffers()
 
         ## ######################################
         ## do set up exactly all tracks
