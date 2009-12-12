@@ -48,7 +48,9 @@ def static_resolver(libs):
 
 
 libs = ('avformat', 'avcodec', 'swscale')
-incdir = [ path_join(ffmpegpath, 'include') ] + nd.get_numpy_include_dirs()
+incdir = [ path_join(ffmpegpath, 'include') ]
+if with_numpy:
+    incdir.append(nd.get_numpy_include_dirs())
 libinc = [ path_join(ffmpegpath, 'lib') ]
 
 if platform == 'win32':
