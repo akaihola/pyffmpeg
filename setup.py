@@ -9,6 +9,7 @@ try:
   with_numpy=True
 except:
   with_numpy=False
+  import sys
   sys.stderr.write("Numpy does not seems to be installed on your system.\n")
   sys.stderr.write("You may still use pyffmpeg but audiosupport and numpy-bride are disabled.\n")  
 
